@@ -1,11 +1,18 @@
 package com.retro.microtube;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -19,35 +26,53 @@ import java.util.ArrayList;
 
 public class MainActivity extends Activity {
 
-    // WARNING: Do NOT use https:// here. Android 2.2 will crash on modern SSL handshakes.
-    // Use an HTTP instance or proxy.
-    public static final String BACKEND_URL = "http://pipedapi.kavin.rocks"; 
+    public static String BACKEND_URL = "http://192.168.1.2:8080"; 
 
     private EditText searchQuery;
     private ListView resultsList;
     private Button btnStopAudio;
+    private Button btnServer;
     private ArrayList<String> videoTitles = new ArrayList<String>();
     private ArrayList<String> videoIds = new ArrayList<String>();
     private ArrayAdapter<String> adapter;
+    private SharedPreferences prefs;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        prefs = getSharedPreferences("MicroTubePrefs", MODE_PRIVATE);
+        BACKEND_URL = prefs.getString("server_url", "http://192.168.1.2:8080");
+
         searchQuery = (EditText) findViewById(R.id.search_query);
         resultsList = (ListView) findViewById(R.id.results_list);
         btnStopAudio = (Button) findViewById(R.id.btn_stop_audio);
+        btnServer = (Button) findViewById(R.id.btn_server);
         Button btnSearch = (Button) findViewById(R.id.btn_search);
 
         adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, videoTitles);
         resultsList.setAdapter(adapter);
 
+        // Tap the ⚙ button to set Server URL
+        btnServer.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                showServerDialog();
+            }
+        });
+
+        // Tap Go to search
         btnSearch.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
+                // Hide soft keyboard
+                InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                imm.hideSoftInputFromWindow(searchQuery.getWindowToken(), 0);
+
                 String query = searchQuery.getText().toString().trim();
                 if (query.length() > 0) {
                     new SearchTask().execute(query);
+                } else {
+                    Toast.makeText(MainActivity.this, "Please type something first!", Toast.LENGTH_SHORT).show();
                 }
             }
         });
@@ -71,6 +96,40 @@ public class MainActivity extends Activity {
                 startActivity(intent);
             }
         });
+    }
+
+    // Physical MENU button support on Samsung GT-I5500
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Server Settings");
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 1) {
+            showServerDialog();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void showServerDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Server URL");
+        final EditText input = new EditText(this);
+        input.setText(BACKEND_URL);
+        builder.setView(input);
+
+        builder.setPositiveButton("Save", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+                BACKEND_URL = input.getText().toString().trim();
+                prefs.edit().putString("server_url", BACKEND_URL).commit();
+                Toast.makeText(MainActivity.this, "Saved: " + BACKEND_URL, Toast.LENGTH_SHORT).show();
+            }
+        });
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
     }
 
     @Override
@@ -99,15 +158,14 @@ public class MainActivity extends Activity {
                 conn.setRequestMethod("GET");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
-                conn.setInstanceFollowRedirects(false); // Stop auto-redirecting to HTTPS
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)");
+                conn.setInstanceFollowRedirects(false);
 
                 int responseCode = conn.getResponseCode();
                 if (responseCode == 301 || responseCode == 302) {
-                    return "Error: Server redirected to HTTPS (TLS unsupported on 2.2)";
+                    return "Redirected to HTTPS (TLS unsupported)";
                 }
                 if (responseCode != 200) {
-                    return "Server HTTP Error: " + responseCode;
+                    return "HTTP Error: " + responseCode;
                 }
 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
@@ -132,7 +190,7 @@ public class MainActivity extends Activity {
                         videoIds.add(id);
                     }
                 }
-                return null; // Null means success
+                return null;
             } catch (Exception e) {
                 return e.getClass().getSimpleName() + ": " + e.getMessage();
             } finally {
@@ -152,7 +210,6 @@ public class MainActivity extends Activity {
                     adapter.notifyDataSetChanged();
                 }
             } else {
-                // Shows the real technical error on your screen
                 Toast.makeText(MainActivity.this, errorMsg, Toast.LENGTH_LONG).show();
             }
         }
