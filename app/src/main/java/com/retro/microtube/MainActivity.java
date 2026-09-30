@@ -19,8 +19,9 @@ import java.util.ArrayList;
 
 public class MainActivity extends Activity {
 
-    // HTTP endpoint used to bypass Android 2.2 TLS handshake limitations
-    public static final String BACKEND_URL = "http://api.piped.privacydev.net"; 
+    // WARNING: Do NOT use https:// here. Android 2.2 will crash on modern SSL handshakes.
+    // Use an HTTP instance or proxy.
+    public static final String BACKEND_URL = "http://pipedapi.kavin.rocks"; 
 
     private EditText searchQuery;
     private ListView resultsList;
@@ -75,11 +76,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Show stop button if user returns while audio is playing
         btnStopAudio.setVisibility(View.VISIBLE);
     }
 
-    private class SearchTask extends AsyncTask<String, Void, Boolean> {
+    private class SearchTask extends AsyncTask<String, Void, String> {
         private ProgressDialog dialog;
 
         @Override
@@ -88,16 +88,27 @@ public class MainActivity extends Activity {
         }
 
         @Override
-        protected Boolean doInBackground(String... params) {
+        protected String doInBackground(String... params) {
             videoTitles.clear();
             videoIds.clear();
+            HttpURLConnection conn = null;
             try {
                 String q = URLEncoder.encode(params[0], "UTF-8");
                 URL url = new URL(BACKEND_URL + "/search?q=" + q + "&filter=videos");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setInstanceFollowRedirects(false); // Stop auto-redirecting to HTTPS
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)");
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == 301 || responseCode == 302) {
+                    return "Error: Server redirected to HTTPS (TLS unsupported on 2.2)";
+                }
+                if (responseCode != 200) {
+                    return "Server HTTP Error: " + responseCode;
+                }
 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                 StringBuilder sb = new StringBuilder();
@@ -112,26 +123,37 @@ public class MainActivity extends Activity {
 
                 for (int i = 0; i < items.length(); i++) {
                     JSONObject item = items.getJSONObject(i);
-                    String title = item.getString("title");
-                    String rawUrl = item.getString("url");
-                    String id = rawUrl.substring(rawUrl.indexOf("v=") + 2);
-
-                    videoTitles.add(title);
-                    videoIds.add(id);
+                    String title = item.optString("title", "No Title");
+                    String rawUrl = item.optString("url", "");
+                    
+                    if (rawUrl.contains("v=")) {
+                        String id = rawUrl.substring(rawUrl.indexOf("v=") + 2);
+                        videoTitles.add(title);
+                        videoIds.add(id);
+                    }
                 }
-                return true;
+                return null; // Null means success
             } catch (Exception e) {
-                return false;
+                return e.getClass().getSimpleName() + ": " + e.getMessage();
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
             }
         }
 
         @Override
-        protected void onPostExecute(Boolean success) {
+        protected void onPostExecute(String errorMsg) {
             dialog.dismiss();
-            if (success) {
-                adapter.notifyDataSetChanged();
+            if (errorMsg == null) {
+                if (videoTitles.isEmpty()) {
+                    Toast.makeText(MainActivity.this, "No videos found", Toast.LENGTH_SHORT).show();
+                } else {
+                    adapter.notifyDataSetChanged();
+                }
             } else {
-                Toast.makeText(MainActivity.this, "Network error", Toast.LENGTH_SHORT).show();
+                // Shows the real technical error on your screen
+                Toast.makeText(MainActivity.this, errorMsg, Toast.LENGTH_LONG).show();
             }
         }
     }
