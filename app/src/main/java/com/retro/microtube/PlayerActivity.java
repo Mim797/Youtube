@@ -42,7 +42,6 @@ public class PlayerActivity extends Activity {
         btnBackground.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 if (streamUrl != null) {
-                    // Switch to background audio service
                     if (videoView.isPlaying()) {
                         videoView.stopPlayback();
                     }
@@ -52,7 +51,7 @@ public class PlayerActivity extends Activity {
                     serviceIntent.putExtra(AudioService.EXTRA_TITLE, videoTitle);
                     startService(serviceIntent);
                     Toast.makeText(PlayerActivity.this, "Playing in background", Toast.LENGTH_SHORT).show();
-                    finish(); // Exit fullscreen player back to list
+                    finish();
                 }
             }
         });
@@ -61,6 +60,8 @@ public class PlayerActivity extends Activity {
     }
 
     private class FetchStreamTask extends AsyncTask<String, Void, String> {
+        private String errorMessage = null;
+
         @Override
         protected void onPreExecute() {
             dialog = ProgressDialog.show(PlayerActivity.this, "", "Loading stream...", true);
@@ -68,13 +69,26 @@ public class PlayerActivity extends Activity {
 
         @Override
         protected String doInBackground(String... params) {
+            HttpURLConnection conn = null;
             try {
                 String videoId = params[0];
                 URL url = new URL(MainActivity.BACKEND_URL + "/streams/" + videoId);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)");
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == 301 || responseCode == 302) {
+                    errorMessage = "Stream redirected to HTTPS (unsupported on 2.2)";
+                    return null;
+                }
+                if (responseCode != 200) {
+                    errorMessage = "Server HTTP error: " + responseCode;
+                    return null;
+                }
 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
                 StringBuilder sb = new StringBuilder();
@@ -87,18 +101,36 @@ public class PlayerActivity extends Activity {
                 JSONObject response = new JSONObject(sb.toString());
                 JSONArray streams = response.getJSONArray("videoStreams");
 
-                // Filter for 240p or 360p progressive MP4
+                // Look for 240p or 360p progressive MP4 that GT-I5500 can decode
                 for (int i = 0; i < streams.length(); i++) {
                     JSONObject s = streams.getJSONObject(i);
-                    String mime = s.getString("mimeType");
-                    String quality = s.getString("quality");
+                    String mime = s.optString("mimeType", "");
+                    String quality = s.optString("quality", "");
 
                     if (mime.contains("video/mp4") && (quality.contains("240p") || quality.contains("360p"))) {
                         return s.getString("url");
                     }
                 }
-            } catch (Exception ignored) {}
-            return null;
+
+                // Fallback to any MP4 if specific resolutions are not labeled
+                for (int i = 0; i < streams.length(); i++) {
+                    JSONObject s = streams.getJSONObject(i);
+                    String mime = s.optString("mimeType", "");
+                    if (mime.contains("video/mp4")) {
+                        return s.getString("url");
+                    }
+                }
+
+                errorMessage = "No compatible MP4 stream found";
+                return null;
+            } catch (Exception e) {
+                errorMessage = e.getClass().getSimpleName() + ": " + e.getMessage();
+                return null;
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
         }
 
         @Override
@@ -116,7 +148,7 @@ public class PlayerActivity extends Activity {
                     }
                 });
             } else {
-                Toast.makeText(PlayerActivity.this, "Stream unavailable", Toast.LENGTH_SHORT).show();
+                Toast.makeText(PlayerActivity.this, errorMessage != null ? errorMessage : "Stream unavailable", Toast.LENGTH_LONG).show();
                 finish();
             }
         }
