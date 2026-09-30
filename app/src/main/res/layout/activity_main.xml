@@ -5,6 +5,7 @@
     android:orientation="vertical"
     android:padding="2dp">
 
+    <!-- Top Bar: Search + Go + Settings Button -->
     <LinearLayout
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
@@ -24,6 +25,13 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Go"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btn_server"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚙"
             android:textSize="12sp" />
     </LinearLayout>
 
